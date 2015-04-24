@@ -1,0 +1,33 @@
+!!!
+%html
+  %head
+    %title Users
+    %link{:rel => :stylesheet, :href => "//cdn.jsdelivr.net/bootstrap/3.3.2/css/bootstrap.min.css"}
+    %link{:rel => :stylesheet, :href => "/styles.css"}
+    %script{:src => "//cdn.jsdelivr.net/jquery/2.1.3/jquery.min.js"}
+    %script{:src => "/users.js"}
+  %body
+    .container
+      %h1 Users
+      .well.well-sm
+        %form.form-inline.create-user-form
+          .form-group
+            %label User name
+            %input{:type => "text", :name => "userName", :required => "required", "minLength" => "2", :class => "form-control" }
+          .form-group
+            %button{:type => "submit", :class => "btn btn-primary"} Create user
+      %table.table.table-striped
+        %tr
+          %th User name
+          %th Phone Number
+          %th UUID
+          %th Token/Secret
+        - users.each do |user|
+          %tr
+            %td= user[:user_name]
+            %td= user[:phone_number]
+            %td= user[:uuid]
+            %td
+              %div= user[:tokens][0]['token']
+              %div= user[:tokens][0]['secret']
+

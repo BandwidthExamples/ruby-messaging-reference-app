@@ -1,0 +1,7 @@
+.create-user-form .form-group:not(:first-child){
+  margin-left: 20px;
+}
+.create-user-form .form-group label{
+  margin-right: 6px;
+}
+

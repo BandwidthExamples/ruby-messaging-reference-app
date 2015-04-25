@@ -10,6 +10,13 @@ require 'ruby-bandwidth'
 $config = YAML.load(File.read("./config.yml"))
 use Rack::PostBodyContentTypeParser
 
+$application_id = nil
+$domain = nil
+$application_name = $config['application'] || 'Ruby Acme App'
+
+$service_provider_token = nil
+$service_provider_secret = nil
+
 #connection for MMP requestss
 $mmp = Faraday.new(:url => $config['base_mmp_url']) do |faraday|
   faraday.response :logger
@@ -30,9 +37,10 @@ $db = SQLite3::Database.new(ENV['DATABASE'] || './acmedb.sqlite')
 #creating database structure
 def create_database_if_need()
   sql =  <<-SQL
-    create table if not exists "users" ("id" integer not null primary key autoincrement, "userName" varchar(255) not null,  "phoneNumber" varchar(255) not null, "uuid" varchar(255) not null,  "_tokens" text);
+    create table if not exists "users" ("id" integer not null primary key autoincrement, "userName" varchar(255) not null,  "phoneNumber" varchar(255) not null, "password" varchar(255) not null, "extensionId" varchar(255) not null, "sipUri" varchar(255) not null, "uuid" varchar(255) not null,  "_tokens" text);
     create unique index if not exists users_username_unique on "users" ("userName");
     create unique index if not exists users_uuid_unique on "users" ("uuid");
+    create unique index if not exists users_sipuri_unique on "users" ("sipUri");
     create unique index if not exists users_phonenumber_unique on "users" ("phoneNumber");
   SQL
   sql.split("\n").each do |command|
@@ -76,6 +84,40 @@ def check_if_user_name_is_available(user_name)
   end
 end
 
+def create_mmp_domain_if_need()
+  r = $mmp.get $domain_path
+  if r.status == 404
+    return make_mmp_request :post, "/partner/#{URI.escape($config['partner'])}/domains", {
+      'name' => $config['domain'],
+      'addressUriScheme' => 'tel',
+      'httpServiceProvider' => {
+        'description' => $config['domain'],
+        'uri' => $config['base_url'] + '/mmp',
+        'username' => 'admin',
+        'password' => 'admin'
+      }
+    }
+  end
+  raise r.text if r.status >= 400
+end
+
+def create_mmp_context_if_need()
+  r = $mmp.get $context_path
+  if r.status == 404
+    return make_mmp_request :post, "/partner/#{URI.escape($config['partner'])}/contexts", {
+      'name' => $config['context'],
+      'addressUriScheme' => 'tel',
+      'httpServiceProvider' => {
+        'description' => $config['domain'],
+        'uri' => $config['base_url'] + '/mmp',
+        'username' => 'admin',
+        'password' => 'admin'
+      }
+    }
+  end
+  raise r.text if r.status >= 400
+end
+
 # ROUTES
 
 set :bind, '0.0.0.0'
@@ -110,9 +152,40 @@ post '/users' do
     token_links = make_mmp_request(:get, "#{$domain_path}#{user_path}/apiTokens")
     tokens = token_links.map {|t| make_mmp_request(:get, t['link'])}
     u = make_mmp_request(:get, "#{$domain_path}#{user_path}")
-    $db.execute("insert into users(userName, phoneNumber,  uuid, _tokens) values(?,?,?,?)", [params['userName'], phone_number, u['uuid'], tokens.to_json()])
+    password = (0...16).map { ('a'..'z').to_a[rand(26)] }.join
+    endpoint = $domain.create_endpoint({
+      :name => params['userName'],
+      :domain_id => $domain.id,
+      :application_id => $application_id,
+      :enabled => true,
+      :credentials => {
+        :password => password
+      }
+    })
+    link = make_mmp_request :get, "/users/#{URI.escape(u['uuid'])}/extensions"
+    extension_id = link.split('/').last
+    $db.execute("insert into users(userName, phoneNumber, password, sipUri, extensionId, uuid, _tokens) values(?,?,?,?,?,?,?)", [
+      params['userName'],
+      phone_number,
+      password,
+      endpoint[i:sip_uri],
+      extension_id,
+      u['uuid'],
+      tokens.to_json()
+    ])
     #return json
-    {'userName' => params['userName'], 'phoneNumber' => phone_number, 'uuid' => u['uuid'], 'tokens' => tokens}.to_json
+    {
+      'userName' => params['userName'],
+      'phoneNumber' => phone_number,
+      'password' => password,
+      'sipUri' => endpoint[:sip_uri],
+      'uuid' => u['uuid'],
+      'tokens' => tokens,
+      'extensionId' => extension_id,
+      'partner' => $config['partner'],
+      'baseMmpUrl' => $config['baseMmpUrl'],
+      'mmpWebsocketUrl' => $config['mmpWebsocketUrl']
+    }.to_json
   rescue =>e
     status 400
     {'result' => 'error', 'message' => e.to_s}.to_json
@@ -120,8 +193,8 @@ post '/users' do
 end
 
 get '/users' do
-  records = $db.execute('select userName, uuid, _tokens, phoneNumber from users')
-  users = records.map {|r| {:user_name => r[0], :uuid => r[1], :tokens => JSON.parse(r[2]), :phone_number => r[3]}}
+  records = $db.execute('select userName, uuid, _tokens, phoneNumber, sipUri, extensionId from users')
+  users = records.map {|r| {:user_name => r[0], :uuid => r[1], :tokens => JSON.parse(r[2]), :phone_number => r[3], :sip_uri => r[4], :extension_id => r[5]}}
   haml :users, :locals => {:users => users}
 end
 
@@ -129,4 +202,74 @@ get '/' do
   redirect '/users'
 end
 
+post '/call' do
+  case params['eventType']
+    when 'incomingcall'
+      callback_url = "#{$config['base_url']}/call"
+      user = $db.execute('select phoneNumber, sipUri from users where phoneNumber = ?', [params['to']]).first
+      if user
+        #incoming call
+        Bandwidth::Call.create({:from => user[0], :to => user[1], :callback_url => callback_url, :tag => params['call_id']})
+        return ''
+      end
+      user = $db.execute('select phoneNumber from users where sipUri = ?', [params['from']]).first
+      if user
+        #outgoing call
+        Bandwidth::Call.create({:from => user[0], :to => params['to'], :callback_url => callback_url, :tag => params['call_id']})
+      end
+    when 'answer'
+     return '' unless params['tag']
+     call = Bandwidth::Call.get(params['tag'])
+     return '' if call.bridge_id
+     call.answer_on_incoming() unless call.state == 'active'
+     Bandwidth::Bridge.create({:call_ids => [params['tag'], params['callId']], :bridge_audio => true})
+  end
+  ''
+end
+
+post '/message' do
+  if params['direction'] == 'in'
+    json = {
+      'from' => "tel:#{params['from']}",
+      'to' => "tel:#{params['to']}",
+      'text' => params['text']
+    }.to_json
+
+    mmp = Faraday.new(:url => $config['base_mmp_url']) do |faraday|
+      faraday.response :logger
+      faraday.adapter Faraday.default_adapter  # make requests with Net::HTTP
+      faraday.basic_auth($service_provider_token, $service_provider_token)
+    end
+    r = mmp.run_request(:post, '/serviceProviders/messages', json, {'Content-Type' => 'application/json'})
+    p r.status
+  end
+  ''
+end
+
+post '/mmp' do
+  message = params['message']
+  return '' unless message
+  from_number = message['from'][4..-1]
+  messages = message['to'].map do |to|
+    {:from => from_number, :to => to[4..-1], :text => message['text']}
+  end
+  Bandwidth::Message.create messages
+end
+
+
 create_database_if_need()
+create_mmp_domain_if_need()
+create_mmp_context_if_need()
+$domain = (Bandwidth::Domain.list().select {|d| d.name == $config['domain']}).first || Bandwidth::Domain.create({
+  :name => $config['domain']
+})
+$application_id = ((Bandwidth::Application.list().select {|a| a.name == $application_name }).first || Bandwidth::Application.create({
+  :name => $application_name,
+  :incoming_call_url => $config['base_url'] + '/call',
+  :incoming_message_url =>  $config['base_url'] + '/message',
+  :auto_answer => true
+})).id
+link = make_mmp_request(:get, "#{$context_path}/serviceProvider/apiTokens").first.link
+res = make_mmp_request(:get, link)
+$service_provider_token = res.token
+$service_provider_secret = res.secret

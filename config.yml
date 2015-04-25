@@ -1,6 +1,8 @@
  api_token: token
  api_secret: secret
- base_mmp_url: http://api-stage.bwmsg.io
+ base_mmp_url: http://
+ mmp_websocket_url: ws://
+ base_url: http://
  partner: catpoc
  domain: testctx
  context: testctx

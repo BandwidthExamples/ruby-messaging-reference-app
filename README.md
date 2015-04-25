@@ -8,7 +8,12 @@ Before run it fill config file (config.yml) with right values:
 `partner`, `domain`, `context` - values of MMP path where new user and its data will be created (account with given `api_token` and `api_secret` should have permissions to work with this partner, this domain and this context),
 
 `base_mmp_url` - base url for MMP requests,
+
+`mmp_websocket_url` - url for websocket connections (to receive incoming messages) 
+
 `catapult_user_id`, `catapult_api_token`, `catapult_api_secret` - auth data for Catapult API (to search and reserve a phone number, etc)
+
+`base_url` - base url of this app.
 
 After that run `bundler install` to install dependencies.
 

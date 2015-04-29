@@ -84,6 +84,7 @@ def check_if_user_name_is_available(user_name)
   end
 end
 
+#create mmp domain
 def create_mmp_domain_if_need()
   r = $mmp.get $domain_path
   if r.status == 404
@@ -101,6 +102,7 @@ def create_mmp_domain_if_need()
   raise r.text if r.status >= 400
 end
 
+#create mmp context
 def create_mmp_context_if_need()
   r = $mmp.get $context_path
   if r.status == 404
@@ -162,11 +164,15 @@ post '/users' do
     #making a link the user with the extension
     make_mmp_request :put, "#{$context_path}/extensions/#{URI.escape(phone_number)}/users", {'userUris' => "#{$config['base_mmp_url']}#{$domain_path}#{user_path}"}
 
-    # geting tokens and user's data
+    # geting tokens
     token_links = make_mmp_request(:get, "#{$domain_path}#{user_path}/apiTokens")
     tokens = token_links.map {|t| make_mmp_request(:get, t['link'])}
+
+    # get user's data
     u = make_mmp_request(:get, "#{$domain_path}#{user_path}")
     password = (0...16).map { ('a'..'z').to_a[rand(26)] }.join
+
+    # create endpoint (for SIP calls)
     endpoint = $domain.create_endpoint({
       :name => params['userName'],
       :domain_id => $domain.id,
@@ -182,9 +188,12 @@ post '/users' do
       faraday.basic_auth(tokens.first['token'], tokens.first['secret'])
       faraday.headers['Accept'] = 'application/json'
     end
+    # get extension id
     r = mmp.get "/users/#{URI.escape(u['uuid'])}/extensions"
     link = JSON.parse(r.body).first['link']
     extension_id = link.split('/').last
+
+    # save to db
     $db.execute("insert into users(userName, phoneNumber, password, sipUri, extensionId, uuid, _tokens) values(?,?,?,?,?,?,?)", [
       params['userName'],
       phone_number,
@@ -223,6 +232,7 @@ get '/' do
   redirect '/users'
 end
 
+# handle call events from Catapult
 post '/call' do
   case params['eventType']
     when 'incomingcall'
@@ -250,6 +260,7 @@ post '/call' do
   ''
 end
 
+# handle messages events from Catapult
 post '/message' do
   if params['direction'] == 'in'
     begin
@@ -272,6 +283,8 @@ post '/message' do
   ''
 end
 
+
+# handle messages from MMP
 post '/mmp' do
   begin
     message = params['message']

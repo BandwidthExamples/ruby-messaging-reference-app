@@ -1,4 +1,11 @@
-#ruby-messaging-reference-app
+<div align="center">
+
+# Bandwidth Ruby Messaging Reference App
+
+<a href="http://dev.bandwidth.com"><img src="https://s3.amazonaws.com/bwdemos/BW_Messaging.png"/></a>
+</div>
+
+[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy)
 
 ## Install
 Before run it fill config file (config.yml) with right values:

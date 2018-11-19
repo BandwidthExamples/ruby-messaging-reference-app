@@ -3,7 +3,8 @@ gem 'ruby-bandwidth'
 gem 'json'
 gem 'faraday'
 gem 'sqlite3'
-gem 'rack'
+gem "rack", ">= 2.0.6"
 gem 'rack-contrib'
 gem 'haml'
-gem 'sinatra'
+gem "sinatra", ">= 2.0.2"
+
